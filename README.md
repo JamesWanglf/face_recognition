@@ -2,7 +2,7 @@
 This is a face recognition work based on [DeepFace](https://github.com/serengil/deepface).  
 This project contains three modules in 2 Python scripts, the first one is for the face detection from the input image, the second one is for the feature extraction from the detected face and the third one is for comparing the feature vectors between dataset and detected face.  
 We will divide the whole project to two parts: face detection and feature comparation, and feature extraction module. So we have two Python scripts for them.  
-Now, let's try to run the project.
+Now, let's try to run the project on ubuntu.
 1. Prerequisite  
    - Install cuda and cudnn.  
      I installed cuda11.2 and libcudnn8_8.1.1.33-1+cuda11.2_amd64.deb downloaded from [Nvidia site](https://developer.nvidia.com/cudnn).  
