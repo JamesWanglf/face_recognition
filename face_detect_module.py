@@ -20,7 +20,7 @@ from deepface.detectors import FaceDetector
 HOSTNAME = '0.0.0.0'
 PORT = 6337
 FEATURE_EXTRACTION_URL = 'http://127.0.0.1:5000/'
-DIR_PATH = "/home/dev38/jameswork/sources/face-recognition/deepface/tests/dataset/"
+DIR_PATH = "dataset/"
 SAMPLE_FACE_VECTOR_DATABASE = []
 FEATURE_EXTRACT_BATCH_SIZE = 10
 
@@ -108,32 +108,35 @@ def detect_faces(img, detector_backend = 'opencv', align = False):
     # rescale the image to the smaller size
     img, scaled_ratio = rescale_image(img)
 
-    #faces stores list of detected_face and region pair
+    # faces stores list of detected_face and region pair
     faces = FaceDetector.detect_faces(face_detector, detector_backend, img, align)
 
     return faces, scaled_ratio
 
 
-def call_feature_extractor(face_data):
+def call_feature_extractor(face_list):
     """
-    Send request to feature extraction node. Request will contain list of face_region and base_image
+    Send request to feature extraction node. Request will contain list of face ids and detected face image
     Returns error code, and result string
     """
     try:
-        face_regions = []
+        face_id_list = []
         image_files = []
-        for face in face_data:
-            face_regions.append({
-                'id': face['id'],
-                'rectangle': face['rectangle']
-            })
+        for face_data in face_list:
+            face_id_list.append(face_data['id'])
+
+            # Convert the numpy array to bytes
+            face_pil_img = im.fromarray(face_data['img'])
+            byte_io = io.BytesIO()
+            face_pil_img.save(byte_io, 'png')
+            byte_io.seek(0)
 
             image_files.append((
-                'image', face['image_data']
+                'image', byte_io
             ))
 
         # Send request to feature extraction node
-        response = requests.post(FEATURE_EXTRACTION_URL, data={'face_regions': json.dumps(face_regions)}, files=image_files)
+        response = requests.post(FEATURE_EXTRACTION_URL, data={'face_id_list': json.dumps(face_id_list)}, files=image_files)
 
         # Parse the response and get the feature vectors
         feature_vector_data = []
@@ -164,7 +167,7 @@ def update_feature_vector_database():
 
     # Read sample images in the dataset directory
     valid_images = [".jpg",".gif",".png"]
-    face_data = []
+    face_list = []
     face_feature_vector_list = []
     for f in os.listdir(DIR_PATH):
         filename = os.path.splitext(f)[0]
@@ -172,46 +175,42 @@ def update_feature_vector_database():
         if ext.lower() not in valid_images:
             continue
 
-        # Read image
-        image_data = open(os.path.join(DIR_PATH, f), 'rb')
-
         # Detect face from sample image
         detected_faces, scaled_ratio = detect_faces(filename + ext)
 
         # Get the first face from the detected faces list. Suppose that the sample image has only 1 face
         face = detected_faces[0]    # tuple (np.ndarray, list) - np.adarray is image. list is face region, e.x. [x, y, w, h]
 
-        # Get face region from the base image(profile image)
-        face_region = recover_face_region(face[1], scaled_ratio)
+        # # Get face region from the base image(profile image)
+        # face_region = recover_face_region(face[1], scaled_ratio)
 
-        face_data.append({
+        face_list.append({
             'id': 0,
-            'rectangle': face_region,
-            'image_data': image_data,
+            'img': face[0],
             'sample_name': filename + ext
         })
 
-        if len(face_data) == FEATURE_EXTRACT_BATCH_SIZE:
-            res_code, face_feature_data = call_feature_extractor(face_data)
+        if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
+            res_code, face_feature_data = call_feature_extractor(face_list)
             
             if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
                 return res_code, None
 
             for i in range(len(face_feature_data)):
-                face_feature_data[i]['sample_name'] = face_data[i]['sample_name']
+                face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
 
             face_feature_vector_list += face_feature_data
 
-            face_data = []
+            face_list = []
 
-    if len(face_data) > 0:
-        res_code, face_feature_data = call_feature_extractor(face_data)
+    if len(face_list) > 0:
+        res_code, face_feature_data = call_feature_extractor(face_list)
         
         if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
             return res_code, None
 
         for i in range(len(face_feature_data)):
-            face_feature_data[i]['sample_name'] = face_data[i]['sample_name']
+            face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
 
         face_feature_vector_list += face_feature_data
 
@@ -273,20 +272,6 @@ def process_image(img):
     """
     Face recognition
     """
-    # Read base image
-    if isinstance(img, str):
-        try:
-            image_full_path = DIR_PATH + img
-            base_image_data = open(image_full_path, 'rb')
-        except:
-            return NO_SUCH_FILE_ERR, None
-
-    elif isinstance(img, bytes):
-        base_image_data = img
-
-    else:
-        return INVALID_IMAGE_ERR, None
-
     # Detect the faces from the image that is dedicated in the path or bytes
     try:
         faces, scaled_ratio = detect_faces(img)
@@ -297,34 +282,33 @@ def process_image(img):
         return NO_FACE_DETECTED_ERR, None
 
     # Send request to feature_extraction module
-    face_regions = []
+    face_list = []
     face_feature_vector_list = []
     for i in range(len(faces)):
         face = faces[i]     # tuple (np.ndarray, list) - np.adarray is image. list is face region, e.x. [x, y, w, h]
 
-        # Need to cast the int32 to int, because int32 is not allowed to be included in http request
-        face_region = recover_face_region(face[1], scaled_ratio)
+        # # Need to cast the int32 to int, because int32 is not allowed to be included in http request
+        # face_region = recover_face_region(face[1], scaled_ratio)
 
-        face_regions.append({
+        face_list.append({
             'id': i,
-            'rectangle': face_region,
-            'image_data': base_image_data
+            'img': face[0]
         })
 
-        if len(face_regions) == FEATURE_EXTRACT_BATCH_SIZE:
+        if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
             # Call the api to extract the feature from the detected faces
-            res_code, face_feature_data = call_feature_extractor(face_regions)
+            res_code, face_feature_data = call_feature_extractor(face_list)
 
             if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
                 return res_code, None
 
             face_feature_vector_list += face_feature_data
 
-            face_regions = []
+            face_list = []
 
-    if len(face_regions) > 0:
+    if len(face_list) > 0:
         # Call the api to extract the feature from the detected faces
-        res_code,  face_feature_data = call_feature_extractor(face_regions)
+        res_code,  face_feature_data = call_feature_extractor(face_list)
 
         if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
             return res_code, None
@@ -373,9 +357,7 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
                 self.send_bad_request_response()
 
             # Process the dedicated image
-            start_time = datetime.now()
             res_code, candidates = process_image(query['image_name'][0])
-            print(f"Recognition of face takes {(datetime.now() - start_time).total_seconds() * 1000}")
 
             response_text = ''
             if res_code != IMAGE_PROCESS_OK:
@@ -387,7 +369,6 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
             self.send_successs_response(response_text)
 
     def do_POST(self):
-
         if self.path.startswith('/face-recognition'):
             ctype, pdict = cgi.parse_header(self.headers['Content-Type'])
             pdict['boundary'] = bytes(pdict['boundary'], "utf-8")
@@ -401,6 +382,7 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
 
                 if isinstance(form['image'], cgi.FieldStorage):
                     image_data = form['image'].file.read()
+
                     res_code, candidates = process_image(image_data)
 
                     if res_code != IMAGE_PROCESS_OK:

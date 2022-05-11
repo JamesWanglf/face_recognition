@@ -46,8 +46,8 @@ detector_backends = ['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe'
 
 app = Flask(__name__)
 
-
-def load_model(model_name='VGGFace'):
+@app.before_first_request
+def load_model(model_name='Facenet'):
     """
     Load Model. Use VGGFace as default
     """
@@ -72,48 +72,6 @@ def load_model(model_name='VGGFace'):
     input_shape = model.layers[0].input_shape[0][1:3]
 
     face_detector = FaceDetector.build_model(detector_backends[0])
-
-
-def parse_face_region(face_region):
-    """
-    Since the http request could not contain numpy int32-format variable, face_detector_module converts them to string to send http request
-    Here, we will convert them into int-format variable again
-    """
-    return {
-        'x': int(face_region[0]),
-        'y': int(face_region[1]),
-        'w': int(face_region[2]),
-        'h': int(face_region[3])
-    }
-
-
-def get_detected_face(base_img_bytes, face_region):
-    """
-    Since the request from face_detector module contains the full image and the face region, so we will process the following tasks:
-    1. Convert full image from bytes to numpy array
-    2. According to the face_region, we will get the face image(numpy arr) from full image
-    Return numpy array - detected face
-    """
-    global face_detector
-    try:
-        # convert bytes data to PIL Image object
-        base_img = Image.open(io.BytesIO(base_img_bytes))
-
-        # PIL image object to numpy array
-        base_img_arr = np.asarray(base_img)
-
-        # Crop the detected face by using face_region and full image
-        region_scale = parse_face_region(face_region)
-        face_img = base_img_arr[int(region_scale['y']):int(region_scale['y'] + region_scale['h']), int(region_scale['x']):int(region_scale['x'] + region_scale['w'])]
-
-        # Align face image
-        face_img_arr = OpenCvWrapper.align_face(face_detector["eye_detector"], face_img)
-
-        return True, face_img_arr
-
-    except Exception as e:
-        print(f'Crop Exception: {e}')
-        return False, str(e)
 
 
 def preprocess_face(face_img, target_size=(224, 224), grayscale = False):
@@ -152,34 +110,22 @@ def preprocess_face(face_img, target_size=(224, 224), grayscale = False):
     return face_img_pixels
 
 
-def get_face_feature(base_img_bytes, face_region, face_features):
+def get_face_feature(face_img, face_id, face_features):
     """
-    Get the feature vector from the face region on the base image
-    1. According to the rectangle data, crop the detected face from the base image
-    2. Resize and normalizing
-    3. Extract the feature vector
+    Get the feature vector from the face image
+    1. Resize and normalizing
+    2. Extract the feature vector
     This method will be run in parallel by threads
     """
     global model, input_shape
 
-    face_id = face_region['id']
-    face_rect = face_region['rectangle']
-
-    # Get detected face(numpy array)
-    status, face_img_arr = get_detected_face(base_img_bytes, face_rect)
-
-    if not status:
-        face_features.append({
-            'id': face_id,
-            'feature_vector': None
-        })
-        return
+    start_time = datetime.now()
 
     # Process the face, get the representation of the detected face
     try:
         # Resize and normalizing
-        face_img_pixels = preprocess_face(face_img_arr, input_shape)
-
+        face_img_pixels = preprocess_face(face_img, input_shape)
+        
         # Extract the feature vector
         face_img_representation = model.predict(face_img_pixels)[0,:]
 
@@ -196,6 +142,8 @@ def get_face_feature(base_img_bytes, face_region, face_features):
             'vector': None
         })
 
+    print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
+
 
 @app.route('/', methods=['POST'])
 def process_detected_faces():
@@ -203,36 +151,23 @@ def process_detected_faces():
     All requests from the face detection node will be arrived at here
     """
     # Parse request
-    body_data = request.form.getlist('face_regions')
-    face_regions = json.loads(body_data[0])
+    body_data = request.form.getlist('face_id_list')
+    face_id_list = json.loads(body_data[0])
     base_img_list = request.files.getlist('image')
 
     face_features = []
-    thread_pool = []
+    for i in range(len(face_id_list)):
+        face_id = face_id_list[i]
+        base_img = base_img_list[i].read()  # this is bytes data of detected face image
 
-    for i in range(len(face_regions)):
-        face = face_regions[i]
-        base_img = base_img_list[i].read()
+        # Convert the bytes to numpy array
+        face_img = np.asarray(Image.open(io.BytesIO(base_img)))
 
-        start_time = datetime.now()
-        get_face_feature(base_img, face, face_features)
-        print(f"{face['rectangle'][2]}, {face['rectangle'][3]}, {(datetime.now() - start_time).total_seconds() * 1000}")
-
-    #     th = threading.Thread(target=get_face_feature, args=(base_img_bytes, face, face_features))
-    #     thread_pool.append(th)
-    #     th.start()
-
-    # for th in thread_pool:
-    #     th.join()
+        get_face_feature(face_img, face_id, face_features)
 	
     return Response(json.dumps(face_features), status=200)
 
 
 if __name__ == '__main__':
-    # load_model('VGGFace')
-    load_model('Facenet')
-    # load_model('OpenFace')
-    # load_model('FbDeepFace')
-
     # run app in debug mode on port 5000
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, threaded=True)
