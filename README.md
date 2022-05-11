@@ -4,10 +4,12 @@ This project contains three modules in 2 Python scripts, the first one is for th
 We will divide the whole project to two parts: face detection and feature comparation, and feature extraction module. So we have two Python scripts for them.  
 Now, let's try to run the project.
 1. Prerequisite  
-Please create virtual env and install the Python packages described in requirements.txt.  
-`python3 -m venv venv`  
-`source ./venv/bin/activate`  
-`pip install -r requirements.txt`
+   - Install cuda and cudnn.  
+     I installed cuda11.2 and libcudnn8_8.1.1.33-1+cuda11.2_amd64.deb downloaded from [Nvidia site](https://developer.nvidia.com/cudnn).  
+   - Please create virtual env and install the Python packages described in requirements.txt.  
+     `python3 -m venv venv`  
+     `source ./venv/bin/activate`  
+     `pip install -r requirements.txt`
 
 2. First, run the feature detection module.  
 `python3 feature_extraction_module.py`  
