@@ -145,6 +145,14 @@ def get_face_feature(face_img, face_id, face_features):
     print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
 
 
+@app.route('/', methods=['GET'])
+def welcome():
+    """
+    Welcome page
+    """
+    return "<h1 style='color:blue'>Feature extraction server is running!</h1>"
+
+
 @app.route('/', methods=['POST'])
 def process_detected_faces():
     """
@@ -170,4 +178,4 @@ def process_detected_faces():
 
 if __name__ == '__main__':
     # run app in debug mode on port 5000
-    app.run(debug=True, port=5000, threaded=True)
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)

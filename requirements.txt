@@ -11,6 +11,7 @@ deepface==0.0.74
 dlib==19.23.1
 filelock==3.6.0
 Flask==2.1.1
+Flask-Script==2.0.6
 flatbuffers==2.0
 fonttools==4.33.3
 gast==0.5.3
@@ -19,6 +20,7 @@ google-auth==2.6.6
 google-auth-oauthlib==0.4.6
 google-pasta==0.2.0
 grpcio==1.44.0
+gunicorn==20.1.0
 h5py==3.6.0
 idna==3.3
 importlib-metadata==4.11.3

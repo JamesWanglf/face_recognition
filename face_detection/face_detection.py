@@ -2,17 +2,15 @@ import cgi
 import cv2
 import io
 import json
-import os
-import random
-from charset_normalizer import detect
 import numpy as np
+import os
 import requests
+import threading
 from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from flask import Flask, request, Response
-from urllib.parse import urlparse, parse_qs
 from PIL import Image as im
 from requests import RequestException, ConnectionError
+from urllib.parse import urlparse, parse_qs
 
 from deepface.commons import functions
 from deepface.detectors import FaceDetector
@@ -159,6 +157,18 @@ def call_feature_extractor(face_list):
     return FEATURE_EXTRACTION_SERVER_RESPONSE_OK, feature_vector_data
 
 
+def feature_extraction_thread(face_list, face_feature_vector_list):
+    res_code, face_feature_data = call_feature_extractor(face_list)
+            
+    if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
+        return res_code, None
+
+    for i in range(len(face_feature_data)):
+        face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
+
+    face_feature_vector_list += face_feature_data
+
+
 def update_feature_vector_database():
     """
     Save the feature vector database with the sample face images
@@ -169,6 +179,8 @@ def update_feature_vector_database():
     valid_images = [".jpg",".gif",".png"]
     face_list = []
     face_feature_vector_list = []
+
+    thread_pool = []
     for f in os.listdir(DIR_PATH):
         filename = os.path.splitext(f)[0]
         ext = os.path.splitext(f)[1]
@@ -191,28 +203,20 @@ def update_feature_vector_database():
         })
 
         if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
-            res_code, face_feature_data = call_feature_extractor(face_list)
-            
-            if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
-                return res_code, None
-
-            for i in range(len(face_feature_data)):
-                face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
-
-            face_feature_vector_list += face_feature_data
+            th = threading.Thread(target=feature_extraction_thread, args=(face_list, face_feature_vector_list))
+            th.start()
+            thread_pool.append(th)
 
             face_list = []
 
     if len(face_list) > 0:
-        res_code, face_feature_data = call_feature_extractor(face_list)
-        
-        if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
-            return res_code, None
+        th = threading.Thread(target=feature_extraction_thread, args=(face_list, face_feature_vector_list))
+        th.start()
+        thread_pool.append(th)
 
-        for i in range(len(face_feature_data)):
-            face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
-
-        face_feature_vector_list += face_feature_data
+    # Wait until all threads are finished
+    for th in thread_pool:
+        th.join()
 
     # Save the vectors of sample faces into global variable
     SAMPLE_FACE_VECTOR_DATABASE = []
@@ -328,7 +332,9 @@ def update_samples():
     """
     Update the database that contains sample face vectors
     """
+    start_time = datetime.now()
     res, faces_count = update_feature_vector_database()
+    print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
 
     if res == UPDATE_SAMPLE_FACES_OK:
         return f'There are {faces_count} sample faces.'
