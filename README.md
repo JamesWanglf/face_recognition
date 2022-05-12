@@ -21,11 +21,11 @@ This will run the Flask http server on 0.0.0.0:5000. When you can access this ur
 `python3 face_detection.py`  
 This will run the http server on 0.0.0.0:6337.
 
-Now, this project provides two endpoints like:
-- /update-samples  
+Now, the main project provides two endpoints like:
+- http://0.0.0.0:6337/update-samples  
   type: GET  
   This will read the image files from /dataset directory, and extract the all the features from the detected faces in those files. We will save these features in the global variable.
-- /face-recognition  
+- http://0.0.0.0:6337//face-recognition  
   type: POST  
   example request:  
   `curl --location --request POST 'http://(domain or ip address):6337/face-recognition' --form 'image=@"/image_path/image.jpg"'`  
