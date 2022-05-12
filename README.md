@@ -12,11 +12,13 @@ Now, let's try to run the project on ubuntu.
      `pip install -r requirements.txt`
 
 2. First, run the feature detection module.  
-`python3 feature_extraction_module.py`  
-This will run the Flask http server on 127.0.0.1:5000.
+`cd ./feature_detection`  
+`gunicorn -w 2 -b 0.0.0.0:5000 wsgi:app`  
+This will run the Flask http server on 0.0.0.0:5000. You can access this url from your browser, it will show you "Feature extraction server is running!"  
 
 3. Run the main module.  
-`python3 face_detection_module.py`  
+`cd ./face_detection`  
+`python3 face_detection.py`  
 This will run the http server on 0.0.0.0:6337.
 
 Now, this project provides two endpoints like:
