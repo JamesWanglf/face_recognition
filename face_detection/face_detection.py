@@ -1,16 +1,14 @@
-import cgi
 import cv2
 import io
 import json
 import numpy as np
-import os
 import requests
+import sqlite3
 import threading
 from datetime import datetime
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from flask import Flask, request, Response
 from PIL import Image as im
 from requests import RequestException, ConnectionError
-from urllib.parse import urlparse, parse_qs
 
 from deepface.commons import functions
 from deepface.detectors import FaceDetector
@@ -24,19 +22,23 @@ FEATURE_EXTRACT_BATCH_SIZE = 10
 
 IMAGE_PROCESS_OK = 100
 IMAGE_PROCESS_ERR = 101
-UPDATE_SAMPLE_FACES_OK = 200
-UPDATE_SAMPLE_FACES_ERR = 201
-FEATURE_EXTRACTION_SERVER_CONNECTION_ERR = 202
-FEATURE_EXTRACTION_REQUEST_ERR = 203
-FEATURE_EXTRACTION_SERVER_RESPONSE_OK = 204
-FEATURE_EXTRACTION_SERVER_RESPONSE_PARSE_ERR = 205
+EXTRACT_SAMPLE_VECTOR_OK = 200
+EXTRACT_SAMPLE_VECTOR_ERR = 201
+UPDATE_SAMPLE_FACES_OK = 202
+UPDATE_SAMPLE_FACES_ERR = 203
+FEATURE_EXTRACTION_SERVER_CONNECTION_ERR = 204
+FEATURE_EXTRACTION_REQUEST_ERR = 205
+FEATURE_EXTRACTION_SERVER_RESPONSE_OK = 206
+FEATURE_EXTRACTION_SERVER_RESPONSE_PARSE_ERR = 207
 FACE_DETECTION_OK = 210
 FACE_DETECTION_ERR = 211
 NO_FACE_DETECTED_ERR = 212
 CALC_DISTANCE_OK = 220
 CALC_DISTANCE_ERR = 221
+NO_SAMPLE_VECTOR_ERR = 222
 NO_SUCH_FILE_ERR = 230
-INVALID_IMAGE_ERR = 231
+INVALID_REQUEST_ERR = 231
+INVALID_IMAGE_ERR = 232
 UNKNOWN_ERR = 500
 
 ERR_MESSAGES = {
@@ -53,10 +55,23 @@ ERR_MESSAGES = {
     NO_FACE_DETECTED_ERR: 'No face detected from the input image.',
     CALC_DISTANCE_OK: 'Calculation of vector distance has been suceeded.',
     CALC_DISTANCE_ERR: 'Failed to calculate the vector distance.',
+    NO_SAMPLE_VECTOR_ERR: 'There is no sample face data.',
     NO_SUCH_FILE_ERR: 'No such file.',
+    INVALID_REQUEST_ERR: 'Invalid request.',
     INVALID_IMAGE_ERR: 'Invalid image has input. Could not read the image data.',
     UNKNOWN_ERR: 'Unknown error has occurred.'
 }
+
+app = Flask(__name__)
+
+
+def get_db_connection():
+    """
+    Get sqlite connection
+    """
+    conn = sqlite3.connect('database.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def rescale_image(img, dsize_width=600):
@@ -99,9 +114,21 @@ def detect_faces(img, detector_backend = 'opencv', align = False):
     face_detector = FaceDetector.build_model(detector_backend)
 
     if isinstance(img, str):
-        img = functions.load_image(DIR_PATH + img)
+        if len(img) == 0:
+            return None, None
+        elif len(img) > 11 and img[0:11] == "data:image/":
+            img = functions.load_image(img)
+        else:
+            img = functions.load_image(DIR_PATH + img)
+
     elif isinstance(img, bytes):
         img = np.array(im.open(io.BytesIO(img)))
+
+    else:
+        return None, None
+
+    if not isinstance(img, np.ndarray):
+        return None, None
 
     # rescale the image to the smaller size
     img, scaled_ratio = rescale_image(img)
@@ -158,6 +185,9 @@ def call_feature_extractor(face_list):
 
 
 def feature_extraction_thread(face_list, face_feature_vector_list):
+    """
+    Call feature extraction module. this function will be run in multi-threads
+    """
     res_code, face_feature_data = call_feature_extractor(face_list)
             
     if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
@@ -169,26 +199,29 @@ def feature_extraction_thread(face_list, face_feature_vector_list):
     face_feature_vector_list += face_feature_data
 
 
-def update_feature_vector_database():
+def extract_sample_feature_vector(data_list):
     """
-    Save the feature vector database with the sample face images
+    Extract the feature vector from the sample images
     """
     global SAMPLE_FACE_VECTOR_DATABASE
 
-    # Read sample images in the dataset directory
-    valid_images = [".jpg",".gif",".png"]
     face_list = []
     face_feature_vector_list = []
 
     thread_pool = []
-    for f in os.listdir(DIR_PATH):
-        filename = os.path.splitext(f)[0]
-        ext = os.path.splitext(f)[1]
-        if ext.lower() not in valid_images:
-            continue
+    for data in data_list:
+        try:
+            img = data['image']
+            metadata = data['metadata']
+        except:
+            return INVALID_REQUEST_ERR, None
 
         # Detect face from sample image
-        detected_faces, scaled_ratio = detect_faces(filename + ext)
+        detected_faces, scaled_ratio = detect_faces(img)
+
+        # No face detected
+        if detected_faces is None:
+            continue
 
         # Get the first face from the detected faces list. Suppose that the sample image has only 1 face
         face = detected_faces[0]    # tuple (np.ndarray, list) - np.adarray is image. list is face region, e.x. [x, y, w, h]
@@ -199,7 +232,7 @@ def update_feature_vector_database():
         face_list.append({
             'id': 0,
             'img': face[0],
-            'sample_name': filename + ext
+            'sample_name': metadata
         })
 
         if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
@@ -218,22 +251,84 @@ def update_feature_vector_database():
     for th in thread_pool:
         th.join()
 
-    # Save the vectors of sample faces into global variable
-    SAMPLE_FACE_VECTOR_DATABASE = []
-    for feature_data in face_feature_vector_list:
-        SAMPLE_FACE_VECTOR_DATABASE.append({
-            'id': feature_data['sample_name'],
-            'feature_vector': feature_data['vector']
-        })
+    return EXTRACT_SAMPLE_VECTOR_OK, face_feature_vector_list
 
-    return UPDATE_SAMPLE_FACES_OK, len(SAMPLE_FACE_VECTOR_DATABASE)
+
+def save_sample_database(sample_vectors, db_type='sqlite'):
+    """
+    Save the sample face feature vector into the database
+    """
+    if db_type == 'sqlite':
+        # Prepare db connection
+        conn = get_db_connection()
+
+        # Run query
+        for vector_data in sample_vectors:
+            name = vector_data['sample_name']
+            vector = vector_data['vector']
+
+            # Delete original vector
+            sql_query = f'DELETE FROM sample_face_vectors WHERE name = "{name}";'
+            conn.execute(sql_query)
+
+            # Save new vector
+            sql_query = f'INSERT INTO sample_face_vectors (name, vector) VALUES ("{name}", "{json.dumps(vector.tolist())}");'
+            conn.execute(sql_query)
+
+        conn.commit()
+        conn.close()
+
+    else:   # Use global variable
+        global SAMPLE_FACE_VECTOR_DATABASE
+
+        SAMPLE_FACE_VECTOR_DATABASE = []
+
+        for vector_data in sample_vectors:
+            SAMPLE_FACE_VECTOR_DATABASE.append({
+                'id': vector_data['sample_name'],
+                'feature_vector': vector_data['vector']
+            })
+    
+    return UPDATE_SAMPLE_FACES_OK, len(sample_vectors)
+
+
+def get_sample_database(db_type='sqlite'):
+    """
+    Read sample feature vector from database
+    """
+    if db_type == 'sqlite':
+        sample_vectors = []
+
+        conn = get_db_connection()
+        sample_vector_list = conn.execute('SELECT * FROM sample_face_vectors').fetchall()
+
+        for vector_data in sample_vector_list:
+            vector = np.array(json.loads(vector_data['vector']))
+            sample_vectors.append({
+                'name': vector_data['name'],
+                'vector': vector
+            })
+
+        if conn:
+            conn.close()
+            
+        return sample_vectors
+
+    else:   # Use global variable
+        global SAMPLE_FACE_VECTOR_DATABASE
+
+        return SAMPLE_FACE_VECTOR_DATABASE
 
 
 def find_face(face_feature_vectors):
     """
     Find the closest sample by comparing the feature vectors
     """
-    global SAMPLE_FACE_VECTOR_DATABASE
+    # Read sample database
+    sample_vectors = get_sample_database()
+
+    if len(sample_vectors) == 0:
+        return NO_SAMPLE_VECTOR_ERR, None
 
     candidates = []
     for vector_data in face_feature_vectors:
@@ -241,22 +336,22 @@ def find_face(face_feature_vectors):
         face_feature_vector = vector_data['vector']
 
         # Initialize variables
-        closest_sample_id = ''
+        closest_sample_name = ''
         closest_distance = -1
         
         # Compare with sample vectors
-        for i in range(len(SAMPLE_FACE_VECTOR_DATABASE)):
-            sample = SAMPLE_FACE_VECTOR_DATABASE[i]
-            sample_vector = sample['feature_vector']
+        for i in range(len(sample_vectors)):
+            sample = sample_vectors[i]
+            sample_vector = sample['vector']
 
             try:
                 # Calculate the distance between sample and the detected face.
                 distance_vector = np.square(face_feature_vector - sample_vector)
                 distance = np.sqrt(distance_vector.sum())
 
-                if closest_sample_id == '' or abs(distance) < abs(closest_distance):
+                if closest_sample_name == '' or abs(distance) < abs(closest_distance):
                     closest_distance = abs(distance)
-                    closest_sample_id = sample['id']
+                    closest_sample_name = sample['name']
 
             except Exception as e:
                 print(e)
@@ -265,7 +360,7 @@ def find_face(face_feature_vectors):
         # Add candidate for this face
         candidates.append({
             'image_id': image_id,
-            'sample_id': closest_sample_id,
+            'sample_id': closest_sample_name,
             'distance': closest_distance
         })
         
@@ -322,114 +417,70 @@ def process_image(img):
     # Find candidates by comparing feature vectors between detected face and samples
     status, candidates = find_face(face_feature_vector_list)
 
-    if status == CALC_DISTANCE_ERR:
+    if status != CALC_DISTANCE_OK:
         return status, None
 
     return IMAGE_PROCESS_OK, candidates
 
 
-def update_samples():
+def update_sample_database(data_list):
     """
     Update the database that contains sample face vectors
     """
     start_time = datetime.now()
-    res, faces_count = update_feature_vector_database()
+    # Extract the feature vector
+    res, sample_vectors = extract_sample_feature_vector(data_list)
+
+    if res != EXTRACT_SAMPLE_VECTOR_OK:
+        return ERR_MESSAGES[res]
+
+    # Save the sample feature vector into database
+    res, sample_count = save_sample_database(sample_vectors)
+
     print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
 
     if res == UPDATE_SAMPLE_FACES_OK:
-        return f'There are {faces_count} sample faces.'
+        return f'There are {sample_count} sample faces.'
 
     return ERR_MESSAGES[res]
 
 
-class HttpServerHandler(SimpleHTTPRequestHandler):
+@app.route('/update-samples', methods=['GET', 'POST'])
+def update_samples():
+    if request.method == 'GET':
+        return Response('Face detection server is running.', status=200)
 
-    def parse_url(self):
-        full_path = f'http://{HOSTNAME}:{PORT}{self.path}'
-        parsed_url = urlparse(full_path)
-        query = parse_qs(parsed_url.query)
+    # POST
+    data_list = request.json
+    response_text = update_sample_database(data_list)
+    return Response(response_text, status=200)
 
-        return query
 
-    def do_GET(self):
-        if self.path.startswith('/update-samples'):
-            response_text = update_samples()
-            self.send_successs_response(response_text)
+@app.route('/face-recognition', methods=['GET', 'POST'])
+def face_recognition():
+    if request.method == 'GET':
+        return Response('Face detection server is running.', status=200)
 
-        elif self.path.startswith('/face-recognition'):
-            # Parse Query
-            query = self.parse_url()
-            if 'image_name' not in query:
-                self.send_bad_request_response()
+    # POST
+    # Read image data
+    img_data = request.json
+    if 'image' not in img_data:
+        return Response(ERR_MESSAGES[INVALID_REQUEST_ERR], status=400)
 
-            # Process the dedicated image
-            res_code, candidates = process_image(query['image_name'][0])
+    # Process image
+    res_code, candidates = process_image(img_data['image'])
 
-            response_text = ''
-            if res_code != IMAGE_PROCESS_OK:
-                response_text = ERR_MESSAGES[res_code]
-            else:
-                for candidate in candidates:
-                    response_text += f"{candidate['image_id']} is detected as {candidate['sample_id']}, the distance is {candidate['distance']}.\n"
+    if res_code != IMAGE_PROCESS_OK:
+        return Response(ERR_MESSAGES[res_code], status=500)
 
-            self.send_successs_response(response_text)
+    else:
+        response_text = ''
+        for candidate in candidates:
+            response_text += f"{candidate['image_id']} is detected as {candidate['sample_id']}, the distance is {candidate['distance']}.\n"
 
-    def do_POST(self):
-        if self.path.startswith('/face-recognition'):
-            ctype, pdict = cgi.parse_header(self.headers['Content-Type'])
-            pdict['boundary'] = bytes(pdict['boundary'], "utf-8")
-            pdict['CONTENT-LENGTH'] = int(self.headers['Content-Length'])
-            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={'REQUEST_METHOD':'POST', 'CONTENT_TYPE':self.headers['Content-Type'], })
-            response_text = ''
-            try:
-                # if isinstance(form['image'], list):
-                #     for record in form["image"]:
-                #         image_data = record.file.read()
-
-                if isinstance(form['image'], cgi.FieldStorage):
-                    image_data = form['image'].file.read()
-
-                    res_code, candidates = process_image(image_data)
-
-                    if res_code != IMAGE_PROCESS_OK:
-                        response_text = ERR_MESSAGES[res_code]
-                    else:
-                        for candidate in candidates:
-                            response_text += f"{candidate['image_id']} is detected as {candidate['sample_id']}, the distance is {candidate['distance']}.\n"
-
-            except IOError:
-                response_text = ERR_MESSAGES[INVALID_IMAGE_ERR]
-
-            self.send_successs_response(response_text)
-        
-        else:
-            self.send_bad_request_response()
-
-    def send_successs_response(self, msg):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(bytes(msg, "utf-8"))
-
-    def send_bad_request_response(self, message=None):
-        self.send_response(400)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        if message:
-            self.wfile.write(bytes(f"Bad Request: {message}", "utf-8"))
-        else:
-            self.wfile.write(bytes(f"Bad Request", "utf-8"))
+        return Response(response_text, status=200)
 
 
 if __name__ == '__main__':
-    
-    webServer = HTTPServer((HOSTNAME, PORT), HttpServerHandler)
-    print("Feature Comparing Server started http://%s:%s" % (HOSTNAME, PORT))
-
-    try:
-        webServer.serve_forever()
-    except KeyboardInterrupt:
-        pass
-
-    webServer.server_close()
-    print("Server stopped.")
+    # Run app in debug mode on port 6337
+    app.run(debug=True, host='0.0.0.0', port=6337, threaded=True)

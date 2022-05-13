@@ -2,37 +2,31 @@ import cv2
 import io
 import json
 import numpy as np
-import random
-import threading
+import os
+import tensorflow as tf
 from datetime import datetime
 from flask import Flask, request, Response
 from PIL import Image
 from urllib.parse import urlparse, parse_qs
 
 from deepface.basemodels import VGGFace, OpenFace, Facenet, FbDeepFace
-from deepface.commons import functions
 from deepface.detectors import FaceDetector
-from deepface.detectors import OpenCvWrapper
-from scipy import rand
 
-import tensorflow as tf
+
 tf_version = tf.__version__
 tf_major_version = int(tf_version.split(".")[0])
 tf_minor_version = int(tf_version.split(".")[1])
 
-physical_devices = tf.config.experimental.list_physical_devices('GPU') 
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
-
 if tf_major_version == 1:
 	import keras
-	from keras.preprocessing.image import load_img, save_img, img_to_array
-	from keras.applications.imagenet_utils import preprocess_input
 	from keras.preprocessing import image
 elif tf_major_version == 2:
     from tensorflow import keras
-    from tensorflow.keras.preprocessing.image import load_img, save_img, img_to_array
-    from tensorflow.keras.applications.imagenet_utils import preprocess_input
     from tensorflow.keras.preprocessing import image
+
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+physical_devices = tf.config.experimental.list_physical_devices('GPU') 
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 model = None
 input_shape = None
@@ -43,8 +37,8 @@ face_detector = None
 #it will not build face detector model in each call (consider for loops)
 detector_backends = ['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe']
 
-
 app = Flask(__name__)
+
 
 @app.before_first_request
 def load_model(model_name='Facenet'):
