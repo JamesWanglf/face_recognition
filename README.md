@@ -37,7 +37,7 @@ Now, the main project provides two endpoints like:
       "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",  
       "metadata": "mydomain.com/myobject2",  
       "action": "embedlink"  
-    },  
+    }  
   ]'`  
   You can send base64-encoded image to this endpoint. This will read the image data, and extract the feature vector from the detected face in the original image. We will save these features in the database(sqlite) or global variable.(this is optional)
 - http://0.0.0.0:6337//face-recognition  
@@ -50,4 +50,6 @@ Now, the main project provides two endpoints like:
       "metadata": "mydomain.com/myobject1",   
       "action": "embedlink"   
     }'`  
-  This will return the verify the faces inside the image.jpg, and try to find the closest face among the /dataset directory, and return the filename.
+  This will return the verify the faces inside the image.jpg, and try to find the closest face among the /dataset directory, and return the filename.  
+  
+  You can check the Python test code in test_request.py.
