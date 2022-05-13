@@ -23,10 +23,31 @@ This will run the http server on 0.0.0.0:6337.
 
 Now, the main project provides two endpoints like:
 - http://0.0.0.0:6337/update-samples  
-  type: GET  
-  This will read the image files from /dataset directory, and extract the all the features from the detected faces in those files. We will save these features in the global variable.
+  type: POST  
+  example request:  
+  `curl --location --request POST 'http://0.0.0.0:6337/update-samples' 
+  --header 'Content-Type: application/json'
+  --data-raw '[   
+    {   
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",   
+      "metadata": "mydomain.com/myobject1",   
+      "action": "embedlink"   
+    },   
+    {  
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",  
+      "metadata": "mydomain.com/myobject2",  
+      "action": "embedlink"  
+    },  
+  ]'`  
+  You can send base64-encoded image to this endpoint. This will read the image data, and extract the feature vector from the detected face in the original image. We will save these features in the database(sqlite) or global variable.(this is optional)
 - http://0.0.0.0:6337//face-recognition  
   type: POST  
   example request:  
-  `curl --location --request POST 'http://(domain or ip address):6337/face-recognition' --form 'image=@"/image_path/image.jpg"'`  
+  `curl --location --request POST 'http://0.0.0.0:6337/face-recognition' 
+  --header 'Content-Type: application/json'
+  --data-raw '{   
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",   
+      "metadata": "mydomain.com/myobject1",   
+      "action": "embedlink"   
+    }'`  
   This will return the verify the faces inside the image.jpg, and try to find the closest face among the /dataset directory, and return the filename.
