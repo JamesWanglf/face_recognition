@@ -12,7 +12,7 @@ Now, let's try to run the project on ubuntu.
      `pip install -r requirements.txt`
 
 2. First, run the feature detection module.  
-`cd ./feature_detection`  
+`cd ./feature_extraction`  
 `gunicorn -w 2 -b 0.0.0.0:5000 wsgi:app`  
 This will run the Flask http server on 0.0.0.0:5000. When you can access this url from your browser, it will show you "Feature extraction server is running!"  
 
