@@ -4,6 +4,9 @@ CREATE TABLE sample_face_vectors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sample_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    metadata TEXT,
+    action TEXT,
     vector TEXT NOT NULL
 );

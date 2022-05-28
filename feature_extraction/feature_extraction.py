@@ -38,14 +38,9 @@ except RuntimeError as e:
     # Virtual devices must be set before GPUs have been initialized
     print(e)
 
+
 model = None
 input_shape = None
-face_detector = None
-
-#detector stored in a global variable in FaceDetector object.
-#this call should be completed very fast because it will return found in memory
-#it will not build face detector model in each call (consider for loops)
-detector_backends = ['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe']
 
 app = Flask(__name__)
 
@@ -53,7 +48,7 @@ app = Flask(__name__)
 @app.before_first_request
 def load_model(model_name='Facenet'):
     """
-    Load Model. Use VGGFace as default
+    Load Model. Use Facenet as default
     """
     # soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     # resource.setrlimit(resource.RLIMIT_AS, (max_memory_size, hard))
@@ -74,8 +69,6 @@ def load_model(model_name='Facenet'):
         model = model_list['VGGFace']()
 
     input_shape = model.layers[0].input_shape[0][1:3]
-
-    face_detector = FaceDetector.build_model(detector_backends[0])
 
 
 def preprocess_face(face_img, target_size=(224, 224), grayscale = False):
@@ -114,7 +107,7 @@ def preprocess_face(face_img, target_size=(224, 224), grayscale = False):
     return face_img_pixels
 
 
-def get_face_feature(face_img, face_id, face_features):
+def get_face_feature(face_img, meta_data, face_features):
     """
     Get the feature vector from the face image
     1. Resize and normalizing
@@ -126,6 +119,10 @@ def get_face_feature(face_img, face_id, face_features):
     start_time = datetime.now()
 
     # Process the face, get the representation of the detected face
+    face_feature = {
+        'id': meta_data['id']
+    }
+
     try:
         # Resize and normalizing
         face_img_pixels = preprocess_face(face_img, input_shape)
@@ -133,18 +130,16 @@ def get_face_feature(face_img, face_id, face_features):
         # Extract the feature vector
         face_img_representation = model.predict(face_img_pixels)[0,:]
 
-        vector_str = face_img_representation.tolist()
+        # Need to cast the nparray to list
+        vector_casted = face_img_representation.tolist()
 
-        face_features.append({
-            'id': face_id,
-            'vector': vector_str
-        })
+        face_feature['vector'] = vector_casted
         
     except Exception as e:
-        face_features.append({
-            'id': face_id,
-            'vector': None
-        })
+        face_feature['vector'] = []
+
+    # Append new feature to Array
+    face_features.append(face_feature)
 
     print((datetime.now() - start_time).total_seconds() * 1000)
 
@@ -163,19 +158,20 @@ def process_detected_faces():
     All requests from the face detection node will be arrived at here
     """
     # Parse request
-    body_data = request.form.getlist('face_id_list')
-    face_id_list = json.loads(body_data[0])
+    body_data = request.form.getlist('face_data')
+    face_data = json.loads(body_data[0])
     base_img_list = request.files.getlist('image')
 
     face_features = []
-    for i in range(len(face_id_list)):
-        face_id = face_id_list[i]
+    for i in range(len(face_data)):
+        meta_data = face_data[i]
         base_img = base_img_list[i].read()  # this is bytes data of detected face image
 
         # Convert the bytes to numpy array
         face_img = np.asarray(Image.open(io.BytesIO(base_img)))
 
-        get_face_feature(face_img, face_id, face_features)
+        # Extract feature
+        get_face_feature(face_img, meta_data, face_features)
 	
     return Response(json.dumps(face_features), status=200)
 

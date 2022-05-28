@@ -22,6 +22,8 @@ def update_sample_database_test():
             base64_img = base64.b64encode(img_file.read()).decode('utf-8')
 
             data_list.append({
+                'id': filename,
+                'name': filename + ext,
                 'image': f'data:image/{ext[1:]};base64,{base64_img}',
                 'metadata': filename + ext,
                 'action': 'embedlink'
@@ -45,8 +47,7 @@ def face_recognition_test(number):
 
         img_data = {
             'image': f'data:image/jpeg;base64,{base64_img}',
-            'metadata': f'img{number}.jpg',
-            'action': 'embedlink'
+            'min_distance': 8
         }
 
     url = f'{hostname}/face-recognition'
@@ -62,7 +63,7 @@ def face_recognition_test(number):
 
 if __name__ == '__main__':
     # Update sample database with the images in /dataset directory
-    update_sample_database_test()
+    # update_sample_database_test()
 
     # Test face recognition with "img1.jpg"
     face_recognition_test(1)

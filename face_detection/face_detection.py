@@ -1,17 +1,40 @@
+from curses import ERR
 import cv2
 import io
 import json
+from importlib_metadata import metadata
 import numpy as np
+import os
 import requests
 import sqlite3
+import tensorflow as tf
 import threading
 from datetime import datetime
-from flask import Flask, request, Response
+from flask import Flask, request, Response, jsonify, make_response
 from PIL import Image as im
 from requests import RequestException, ConnectionError
 
 from deepface.commons import functions
 from deepface.detectors import FaceDetector
+
+tf_version = tf.__version__
+tf_major_version = int(tf_version.split(".")[0])
+tf_minor_version = int(tf_version.split(".")[1])
+
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+physical_devices = tf.config.list_physical_devices('GPU')
+try:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    tf.config.set_logical_device_configuration(
+        physical_devices[0],
+        [tf.config.LogicalDeviceConfiguration(memory_limit=2048)]
+    )
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(physical_devices), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+except RuntimeError as e:
+    # Virtual devices must be set before GPUs have been initialized
+    print(e)
+
 
 HOSTNAME = '0.0.0.0'
 PORT = 6337
@@ -92,13 +115,12 @@ def rescale_image(img, dsize_width=600):
 
 def recover_face_region(detected_region, scaled_ratio):
     """
-    Rescaled the original image to reduce the face detection time. This will not affect the detection too much.
-    So I will rescale the detected region.
+    Since I rescaled the original image to reduce the face detection time, I will recover the detected region.
     """
     face_region = []
     for i in range(4):
         face_region.append(
-            int(np.int32(detected_region[i]).item() / scaled_ratio)
+            str(int(np.int32(detected_region[i]).item() / scaled_ratio))
         )
     
     return face_region
@@ -148,14 +170,19 @@ def call_feature_extractor(face_list):
     Send request to feature extraction node. Request will contain list of face ids and detected face image
     Returns error code, and result string
     """
+    success_feature_vectors = []
+    failure_feature_vectors = []
+
     try:
-        face_id_list = []
+        face_data = []
         image_files = []
-        for face_data in face_list:
-            face_id_list.append(face_data['id'])
+        for f in face_list:
+            face_data.append({
+                'id': f['id']
+            })
 
             # Convert the numpy array to bytes
-            face_pil_img = im.fromarray(face_data['img'])
+            face_pil_img = im.fromarray(f['img'])
             byte_io = io.BytesIO()
             face_pil_img.save(byte_io, 'png')
             byte_io.seek(0)
@@ -165,60 +192,94 @@ def call_feature_extractor(face_list):
             ))
 
         # Send request to feature extraction node
-        response = requests.post(FEATURE_EXTRACTION_URL, data={'face_id_list': json.dumps(face_id_list)}, files=image_files)
+        response = requests.post(FEATURE_EXTRACTION_URL, data={'face_data': json.dumps(face_data)}, files=image_files)
 
         # Parse the response and get the feature vectors
-        feature_vector_data = []
         try:
             feature_list = json.loads(response.text)
-            for face in feature_list:
-                feature_vector_data.append({
-                    'id': face['id'],
-                    'vector': np.array(face['vector'])
-                })
+
+            # Determine which one is success, which one is failure
+            for fe in feature_list:
+                if len(fe['vector']) == 0:  # If feature extraction is failed
+                    failure_feature_vectors.append({
+                        'id': fe['id']
+                    })
+                else:   # If feature extraction is suceed
+                    success_feature_vectors.append({
+                        'id': fe['id'],
+                        'vector': np.array(fe['vector'])
+                    })
+
         except:
-            return FEATURE_EXTRACTION_SERVER_RESPONSE_PARSE_ERR, None
+            return FEATURE_EXTRACTION_SERVER_RESPONSE_PARSE_ERR, None, None
 
     except ConnectionError:
-        return FEATURE_EXTRACTION_SERVER_CONNECTION_ERR, None
+        return FEATURE_EXTRACTION_SERVER_CONNECTION_ERR, None, None
 
     except RequestException:
-        return FEATURE_EXTRACTION_REQUEST_ERR, None
+        return FEATURE_EXTRACTION_REQUEST_ERR, None, None
 
-    return FEATURE_EXTRACTION_SERVER_RESPONSE_OK, feature_vector_data
+    return FEATURE_EXTRACTION_SERVER_RESPONSE_OK, success_feature_vectors, failure_feature_vectors
 
 
-def feature_extraction_thread(face_list, face_feature_vector_list):
+def feature_extraction_thread(face_list, extract_success_list, extract_failure_list):
     """
     Call feature extraction module. this function will be run in multi-threads
     """
-    res_code, face_feature_data = call_feature_extractor(face_list)
+    # Prepare the MetaData's Map, this will be useful to determine which faces are success to extract features, and failure
+    metadata_map = {}
+    for f in face_list:
+        metadata_map[f['id']] = f
+
+    # Call API of feature extraction server
+    res_code, success_face_features, failure_face_features = call_feature_extractor(face_list)
             
     if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
-        return res_code, None
+        # Add all faces to failed list
+        for f in face_list:
+            extract_failure_list.append({
+                'id': f['id']
+            })
+        return
 
-    for i in range(len(face_feature_data)):
-        face_feature_data[i]['sample_name'] = face_list[i]['sample_name']
+    # Treat the success faces, add meta data
+    for face in success_face_features:
+        # If could not find meta data of this face, move it to failed list
+        if face['id'] not in metadata_map:
+            failure_face_features.append(face)
+            continue
 
-    face_feature_vector_list += face_feature_data
+        # Add meta data
+        meta_data = metadata_map[face['id']]
+        face['name'] = meta_data['name']
+        face['metadata'] = meta_data['metadata']
+        face['action'] = meta_data['action']
+
+    # Append to result arrays
+    extract_success_list += success_face_features
+    extract_failure_list += failure_face_features
 
 
 def extract_sample_feature_vector(data_list):
     """
     Extract the feature vector from the sample images
+    Return code, extract_success_list, extract_failure_list
     """
-    global SAMPLE_FACE_VECTOR_DATABASE
-
     face_list = []
-    face_feature_vector_list = []
-
+    extract_success_list = []
+    extract_failure_list = []
     thread_pool = []
+
+    # Main loop, each element will contain one image and its metadata
     for data in data_list:
         try:
+            sample_id = data['id']
+            name = data['name']
             img = data['image']
             metadata = data['metadata']
+            action = data['action']
         except:
-            return INVALID_REQUEST_ERR, None
+            return INVALID_REQUEST_ERR, None, None
 
         # Detect face from sample image
         detected_faces, scaled_ratio = detect_faces(img)
@@ -234,20 +295,22 @@ def extract_sample_feature_vector(data_list):
         # face_region = recover_face_region(face[1], scaled_ratio)
 
         face_list.append({
-            'id': 0,
+            'id': sample_id,
             'img': face[0],
-            'sample_name': metadata
+            'name': name,
+            'metadata': metadata,
+            'action': action
         })
 
         if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
-            th = threading.Thread(target=feature_extraction_thread, args=(face_list, face_feature_vector_list))
+            th = threading.Thread(target=feature_extraction_thread, args=(face_list, extract_success_list, extract_failure_list))
             th.start()
             thread_pool.append(th)
 
             face_list = []
 
     if len(face_list) > 0:
-        th = threading.Thread(target=feature_extraction_thread, args=(face_list, face_feature_vector_list))
+        th = threading.Thread(target=feature_extraction_thread, args=(face_list, extract_success_list, extract_failure_list))
         th.start()
         thread_pool.append(th)
 
@@ -255,7 +318,7 @@ def extract_sample_feature_vector(data_list):
     for th in thread_pool:
         th.join()
 
-    return EXTRACT_SAMPLE_VECTOR_OK, face_feature_vector_list
+    return EXTRACT_SAMPLE_VECTOR_OK, extract_success_list, extract_failure_list
 
 
 def save_sample_database(sample_vectors, db_type='sqlite'):
@@ -268,15 +331,19 @@ def save_sample_database(sample_vectors, db_type='sqlite'):
 
         # Run query
         for vector_data in sample_vectors:
-            name = vector_data['sample_name']
+            sample_id = vector_data['id']
+            name = vector_data['name']
+            metadata = vector_data['metadata']
+            action = vector_data['action']
             vector = vector_data['vector']
 
             # Delete original vector
-            sql_query = f'DELETE FROM sample_face_vectors WHERE name = "{name}";'
+            sql_query = f'DELETE FROM sample_face_vectors WHERE sample_id = "{sample_id}";'
             conn.execute(sql_query)
 
             # Save new vector
-            sql_query = f'INSERT INTO sample_face_vectors (name, vector) VALUES ("{name}", "{json.dumps(vector.tolist())}");'
+            sql_query = f'INSERT INTO sample_face_vectors (sample_id, name, metadata, action, vector) ' \
+                f'VALUES ("{sample_id}", "{name}", "{metadata}", "{action}", "{json.dumps(vector.tolist())}");'
             conn.execute(sql_query)
 
         conn.commit()
@@ -289,11 +356,14 @@ def save_sample_database(sample_vectors, db_type='sqlite'):
 
         for vector_data in sample_vectors:
             SAMPLE_FACE_VECTOR_DATABASE.append({
-                'id': vector_data['sample_name'],
+                'id': vector_data['id'],
+                'name': vector_data['name'],
+                'metadata': vector_data['metadata'],
+                'action': vector_data['action'],
                 'feature_vector': vector_data['vector']
             })
     
-    return UPDATE_SAMPLE_FACES_OK, len(sample_vectors)
+    return UPDATE_SAMPLE_FACES_OK
 
 
 def get_sample_database(db_type='sqlite'):
@@ -309,7 +379,10 @@ def get_sample_database(db_type='sqlite'):
         for vector_data in sample_vector_list:
             vector = np.array(json.loads(vector_data['vector']))
             sample_vectors.append({
+                'id': vector_data['sample_id'],
                 'name': vector_data['name'],
+                'metadata': vector_data['metadata'],
+                'action': vector_data['action'],
                 'vector': vector
             })
 
@@ -324,7 +397,7 @@ def get_sample_database(db_type='sqlite'):
         return SAMPLE_FACE_VECTOR_DATABASE
 
 
-def find_face(face_feature_vectors):
+def find_face(face_feature_vectors, min_distance):
     """
     Find the closest sample by comparing the feature vectors
     """
@@ -336,11 +409,12 @@ def find_face(face_feature_vectors):
 
     candidates = []
     for vector_data in face_feature_vectors:
-        image_id = vector_data['id']
         face_feature_vector = vector_data['vector']
 
         # Initialize variables
-        closest_sample_name = ''
+        closest_id = ''
+        closest_name = ''
+        closest_metadata = ''
         closest_distance = -1
         
         # Compare with sample vectors
@@ -353,25 +427,32 @@ def find_face(face_feature_vectors):
                 distance_vector = np.square(face_feature_vector - sample_vector)
                 distance = np.sqrt(distance_vector.sum())
 
-                if closest_sample_name == '' or abs(distance) < abs(closest_distance):
+                if (closest_id == '' or abs(distance) < abs(closest_distance)) and abs(distance) < min_distance:
                     closest_distance = abs(distance)
-                    closest_sample_name = sample['name']
+                    closest_id = sample['id']
+                    closest_name = sample['name']
+                    closest_metadata = sample['metadata']
 
             except Exception as e:
                 print(e)
                 pass
         
+        # If not find fit sample, skip
+        if closest_id == '':
+            continue
+
         # Add candidate for this face
         candidates.append({
-            'image_id': image_id,
-            'sample_id': closest_sample_name,
-            'distance': closest_distance
+            'id': closest_id,
+            'name': closest_name,
+            'metadata': closest_metadata,
+            'bbox': vector_data['bbox']
         })
         
     return CALC_DISTANCE_OK, candidates
 
 
-def process_image(img):
+def process_image(img, min_distance):
     """
     Face recognition
     """
@@ -384,15 +465,21 @@ def process_image(img):
     if len(faces) == 0:
         return NO_FACE_DETECTED_ERR, None
 
-    # Send request to feature_extraction module
+    bound_box_map = {}
     face_list = []
     face_feature_vector_list = []
+
+    # Send request to feature_extraction module
     for i in range(len(faces)):
         face = faces[i]     # tuple (np.ndarray, list) - np.adarray is image. list is face region, e.x. [x, y, w, h]
 
-        # # Need to cast the int32 to int, because int32 is not allowed to be included in http request
-        # face_region = recover_face_region(face[1], scaled_ratio)
+        # Need to cast the int32 to str
+        face_region = recover_face_region(face[1], scaled_ratio)
 
+        # Prepare bound box map
+        bound_box_map[i] = ', '.join(face_region)
+
+        # Make the face list, I will send bunch of faces to Feature Extraction Server at once
         face_list.append({
             'id': i,
             'img': face[0]
@@ -400,26 +487,35 @@ def process_image(img):
 
         if len(face_list) == FEATURE_EXTRACT_BATCH_SIZE:
             # Call the api to extract the feature from the detected faces
-            res_code, face_feature_data = call_feature_extractor(face_list)
+            res_code, success_face_features, failure_face_features = call_feature_extractor(face_list)
 
             if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
                 return res_code, None
 
-            face_feature_vector_list += face_feature_data
+            face_feature_vector_list += success_face_features
 
             face_list = []
 
     if len(face_list) > 0:
         # Call the api to extract the feature from the detected faces
-        res_code,  face_feature_data = call_feature_extractor(face_list)
+        res_code, success_face_features, failure_face_features = call_feature_extractor(face_list)
 
         if res_code != FEATURE_EXTRACTION_SERVER_RESPONSE_OK:
             return res_code, None
 
-        face_feature_vector_list += face_feature_data
+        face_feature_vector_list += success_face_features
+    
+    # Add bound box for each face feature vector
+    vector_list = []
+    for f in face_feature_vector_list:
+        if int(f['id']) not in bound_box_map:
+            continue
+        
+        f['bbox'] = bound_box_map[int(f['id'])]
+        vector_list.append(f)
 
     # Find candidates by comparing feature vectors between detected face and samples
-    status, candidates = find_face(face_feature_vector_list)
+    status, candidates = find_face(vector_list, min_distance)
 
     if status != CALC_DISTANCE_OK:
         return status, None
@@ -432,32 +528,44 @@ def update_sample_database(data_list):
     Update the database that contains sample face vectors
     """
     start_time = datetime.now()
+
     # Extract the feature vector
-    res, sample_vectors = extract_sample_feature_vector(data_list)
+    res, success_sample_vectors, failure_sample_vectors = extract_sample_feature_vector(data_list)
 
     if res != EXTRACT_SAMPLE_VECTOR_OK:
-        return ERR_MESSAGES[res]
+        return res, success_sample_vectors, failure_sample_vectors
 
     # Save the sample feature vector into database
-    res, sample_count = save_sample_database(sample_vectors)
+    res = save_sample_database(success_sample_vectors)
 
     print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
 
-    if res == UPDATE_SAMPLE_FACES_OK:
-        return f'There are {sample_count} sample faces.'
-
-    return ERR_MESSAGES[res]
+    return res, success_sample_vectors, failure_sample_vectors
 
 
 @app.route('/update-samples', methods=['GET', 'POST'])
 def update_samples():
+    # GET request
     if request.method == 'GET':
         return Response('Face detection server is running.', status=200)
 
-    # POST
+    # POST request
     data_list = request.json
-    response_text = update_sample_database(data_list)
-    return Response(response_text, status=200)
+
+    ## Try to extract features from samples, and update database
+    res_code, success_list, failure_list  = update_sample_database(data_list)
+    if res_code != UPDATE_SAMPLE_FACES_OK:
+        response = {
+            'error': ERR_MESSAGES[res_code]
+        }
+        return make_response(jsonify(response), 400)
+
+    ## Make response
+    response = {
+        'success': [f['id'] for f in success_list],
+        'fail': [f['id'] for f in failure_list]
+    }
+    return make_response(jsonify(response), 200)
 
 
 @app.route('/face-recognition', methods=['GET', 'POST'])
@@ -469,20 +577,27 @@ def face_recognition():
     # Read image data
     img_data = request.json
     if 'image' not in img_data:
-        return Response(ERR_MESSAGES[INVALID_REQUEST_ERR], status=400)
+        response = {
+            'error': ERR_MESSAGES[INVALID_REQUEST_ERR]
+        }
+        return make_response(jsonify(response), 400)
+
+    # min_distance is optional parameter in request
+    min_distance = 9  # default threshold for facenet, 0.4 for vgg-face model
+    if 'min_distance' in img_data:
+        min_distance = float(img_data['min_distance'])
 
     # Process image
-    res_code, candidates = process_image(img_data['image'])
+    res_code, candidates = process_image(img_data['image'], min_distance)
 
     if res_code != IMAGE_PROCESS_OK:
-        return Response(ERR_MESSAGES[res_code], status=500)
+        response = {
+            'error': ERR_MESSAGES[res_code]
+        }
+        return make_response(jsonify(response), 500)
 
-    else:
-        response_text = ''
-        for candidate in candidates:
-            response_text += f"{candidate['image_id']} is detected as {candidate['sample_id']}, the distance is {candidate['distance']}.\n"
-
-        return Response(response_text, status=200)
+    # Return candidates
+    return make_response(jsonify(candidates), 200)
 
 
 if __name__ == '__main__':
