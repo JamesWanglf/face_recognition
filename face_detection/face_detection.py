@@ -136,6 +136,10 @@ def detect_faces(img, detector_backend = 'opencv', align = False):
     # faces stores list of detected_face and region pair
     faces = FaceDetector.detect_faces(face_detector, detector_backend, img, align)
 
+    # no face is detected
+    if len(faces) == 0:
+        return None, None
+
     return faces, scaled_ratio
 
 
