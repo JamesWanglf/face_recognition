@@ -10,6 +10,8 @@ Now, let's try to run the project on ubuntu.
      `python3 -m venv venv`  
      `source ./venv/bin/activate`  
      `pip install -r requirements.txt`
+   - Install mod_wsgi  
+     `sudo apt-get install apache2 libapache2-mod-wsgi-py3`
 
 2. First, run the feature detection module.  
 `cd ./feature_extraction`  
