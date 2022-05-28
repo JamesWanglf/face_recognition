@@ -120,4 +120,4 @@ Now, the main project provides two endpoints like:
    }
    ```
   
-  You can check the Python test code in test_request.py.
+  You can check the Python test code in [test_request.py](https://github.com/JamesWanglf/face_recognition/blob/main/test_request.py).
