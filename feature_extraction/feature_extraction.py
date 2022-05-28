@@ -25,8 +25,18 @@ elif tf_major_version == 2:
     from tensorflow.keras.preprocessing import image
 
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
-physical_devices = tf.config.experimental.list_physical_devices('GPU') 
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
+physical_devices = tf.config.list_physical_devices('GPU')
+try:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    tf.config.set_logical_device_configuration(
+        physical_devices[0],
+        [tf.config.LogicalDeviceConfiguration(memory_limit=2048)]
+    )
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(physical_devices), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+except RuntimeError as e:
+    # Virtual devices must be set before GPUs have been initialized
+    print(e)
 
 model = None
 input_shape = None
@@ -136,7 +146,7 @@ def get_face_feature(face_img, face_id, face_features):
             'vector': None
         })
 
-    print(f"{(datetime.now() - start_time).total_seconds() * 1000}")
+    print((datetime.now() - start_time).total_seconds() * 1000)
 
 
 @app.route('/', methods=['GET'])
