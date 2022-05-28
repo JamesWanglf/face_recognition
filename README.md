@@ -69,7 +69,8 @@ Now, the main project provides two endpoints like:
   ```
   
 - http://0.0.0.0:6337//face-recognition  
-  This will return the verified faces inside the image.jpg, and try to find the closest face among the sample data, and return its id, name, metadata and bounding box.    
+  This will return the list of verified face information inside the posted image, including id, name, metadata and bounding box of the closest sample face for each detected faces.  
+  
   **type: POST**  
   **Request:**  
   ```
