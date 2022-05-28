@@ -6,6 +6,7 @@ Now, let's try to run the project on ubuntu.
 1. Prerequisite  
    - Install cuda and cudnn.  
      I installed cuda11.2 and libcudnn8_8.1.1.33-1+cuda11.2_amd64.deb downloaded from [Nvidia site](https://developer.nvidia.com/cudnn).  
+     If you are using the different version of cuda and cudnn, you need to set the suitable version of tensorflow in [requirements.txt](https://github.com/JamesWanglf/face_recognition/blob/main/requirements.txt)  
    - Please create virtual env and install the Python packages described in requirements.txt.  
      `python3 -m venv venv`  
      `source ./venv/bin/activate`  
