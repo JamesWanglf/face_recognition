@@ -104,7 +104,7 @@ def recover_face_region(detected_region, scaled_ratio):
     return face_region
 
 
-def detect_faces(img, detector_backend = 'opencv', align = False):
+def detect_faces(img, detector_backend = 'retinaface', align = False):
     """
     Detect the faces from the base image
     """
