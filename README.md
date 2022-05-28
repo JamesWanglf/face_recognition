@@ -49,10 +49,8 @@ Now, the main project provides two endpoints like:
   `curl --location --request POST 'http://0.0.0.0:6337/face-recognition' 
   --header 'Content-Type: application/json'
   --data-raw '{   
-      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",   
-      "metadata": "mydomain.com/myobject1",   
-      "action": "embedlink"   
-    }'`  
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...."
+   }'`  
   This will return the verify the faces inside the image.jpg, and try to find the closest face among the /dataset directory, and return the filename.  
   
   You can check the Python test code in test_request.py.
