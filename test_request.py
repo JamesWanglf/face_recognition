@@ -47,7 +47,7 @@ def face_recognition_test(number):
 
         img_data = {
             'image': f'data:image/jpeg;base64,{base64_img}',
-            'min_distance': 8
+            'min_distance': 9
         }
 
     url = f'{hostname}/face-recognition'
