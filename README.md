@@ -26,31 +26,98 @@ This will run the http server on 0.0.0.0:6337.
 
 Now, the main project provides two endpoints like:
 - http://0.0.0.0:6337/update-samples  
-  type: POST  
-  example request:  
-  `curl --location --request POST 'http://0.0.0.0:6337/update-samples' 
+  **type: POST**  
+  **Request**:  
+  ```
+  curl --location --request POST 'http://0.0.0.0:6337/update-samples'
   --header 'Content-Type: application/json'
-  --data-raw '[   
-    {   
-      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",   
-      "metadata": "mydomain.com/myobject1",   
-      "action": "embedlink"   
-    },   
-    {  
-      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",  
-      "metadata": "mydomain.com/myobject2",  
-      "action": "embedlink"  
-    }  
-  ]'`  
-  You can send base64-encoded image to this endpoint. This will read the image data, and extract the feature vector from the detected face in the original image. We will save these features in the database(sqlite) or global variable.(this is optional)
+  --data-raw '[
+    {
+      "id": "person1",
+      "name: "person1",
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",
+      "metadata": "mydomain.com/myobject1",
+      "action": "embedlink"
+    },
+    {
+      "id": "person2",
+      "name: "person2",
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",
+      "metadata": "mydomain.com/myobject2",
+      "action": "embedlink"
+    }
+  ]'
+  ```  
+  You can send base64-encoded image to this endpoint. This will read the image data, and extract the feature vector from the detected face in the original image. We will save these features in the database(sqlite) or global variable.(this is optional)  
+  
+  **Response**:  
+  status_code: 200  
+  response:  
+  ```
+  {
+      "success": [all success ids],
+      "fail": [list of failed ids]
+  }
+  ```
+  
+  status_code: 400  
+  response:  
+  ```
+  {
+      "error": "Invalid request."
+  }
+  ```
+  
 - http://0.0.0.0:6337//face-recognition  
-  type: POST  
-  example request:  
-  `curl --location --request POST 'http://0.0.0.0:6337/face-recognition' 
+  This will return the verified faces inside the image.jpg, and try to find the closest face among the sample data, and return its id, name, metadata and bounding box.    
+  **type: POST**  
+  **Request:**  
+  ```
+  curl --location --request POST 'http://0.0.0.0:6337/face-recognition'
   --header 'Content-Type: application/json'
-  --data-raw '{   
-      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...."
-   }'`  
-  This will return the verify the faces inside the image.jpg, and try to find the closest face among the /dataset directory, and return the filename.  
+  --data-raw '{
+      "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD....",
+      "min_distance": 9
+   }'
+   ```  
+   "min_distance" is optional field. The value of this field is related with the feature extraction model.  
+     For example, it will be in [0, 1] for "vgg-face" model, [0, 20] for "facenet" model.  
+     Since we are using "facenet" model as default, the ideal threshold is 9.(0.4 for "vgg-face" model)
+  
+   **Response**:  
+   status_code: 200  
+   response:  
+   ```
+   [
+      {
+         "bbox": "x, y, w, h", 
+         "id": "", 
+         "metadata": "", 
+         "name": ""
+      },
+      {
+         "bbox": "x, y, w, h", 
+         "id": "", 
+         "metadata": "", 
+         "name": ""
+      },
+   ]
+   ```
+   
+   status_code: 400  
+   response:  
+   ```
+   {
+      "error": "Invalid request."
+   }
+   ```
+   
+   status_code: 500  
+   response:  
+   ```
+   {
+      "error": "error message"
+   }
+   ```
   
   You can check the Python test code in test_request.py.
