@@ -61,9 +61,22 @@ def face_recognition_test(number):
     print(response.text)
 
 
+def clear_samples():
+    url = f'{hostname}/clear-samples'
+    headers = {
+        'Content-Type': 'application/json'
+    }
+    response = requests.get(url, headers=headers, data={})
+
+    print(response.text)
+
+
 if __name__ == '__main__':
     # Update sample database with the images in /dataset directory
     # update_sample_database_test()
 
+    # Clear samples
+    clear_samples()
+
     # Test face recognition with "img1.jpg"
-    face_recognition_test(1)
+    # face_recognition_test(1)

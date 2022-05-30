@@ -568,6 +568,30 @@ def update_samples():
     return make_response(jsonify(response), 200)
 
 
+@app.route('/clear-samples', methods=['GET', 'POST'])
+def clear_samples():
+    try:
+        conn = get_db_connection()
+
+        sql_query = 'DELETE FROM sample_face_vectors;'
+        conn.execute(sql_query)
+
+        conn.commit()
+        conn.close()
+
+        response = {
+            'success': 'Samples have been removed successfully'
+        }
+        
+        return make_response(jsonify(response), 200)
+    
+    except Exception as e:
+        response = {
+            'fail': str(e)
+        }
+        return make_response(jsonify(response), 500)
+
+
 @app.route('/face-recognition', methods=['GET', 'POST'])
 def face_recognition():
     if request.method == 'GET':
