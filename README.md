@@ -68,6 +68,33 @@ Now, the main project provides two endpoints like:
   }
   ```
   
+- http://0.0.0.0:6337//clear-samples  
+  This will clear the sample data from database.
+  
+  **type: GET**  
+  **Request:**  
+  ```
+  curl --location --request GET 'http://0.0.0.0:6337/clear-samples'
+  --header 'Content-Type: application/json'
+  ```
+  
+  **Response:**  
+  status_code: 200  
+  response:  
+  ```
+  {
+      "success": "Samples have been removed successfully"
+  }
+  ```
+  
+  status_code: 500  
+  response:  
+  ```
+  {
+      "fail": "error_message"
+  }
+  ```
+  
 - http://0.0.0.0:6337//face-recognition  
   This will return the list of verified face information inside the posted image, including id, name, metadata and bounding box of the closest sample face for each detected faces.  
   
