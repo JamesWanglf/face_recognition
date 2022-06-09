@@ -21,7 +21,7 @@ This will run the Flask http server on 0.0.0.0:5000. When you can access this ur
 
 3. Run the main module.  
 `cd ./face_detection`  
-`python3 face_detection.py`  
+`gunicorn -w 2 -b 0.0.0.0:6337 wsgi:app`  
 This will run the http server on 0.0.0.0:6337.
 
 Now, the main project provides two endpoints like:
