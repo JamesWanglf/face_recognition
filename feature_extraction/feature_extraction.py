@@ -25,19 +25,21 @@ elif tf_major_version == 2:
     from tensorflow.keras.preprocessing import image
 
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
-physical_devices = tf.config.list_physical_devices('GPU')
 try:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
     tf.config.set_logical_device_configuration(
-        physical_devices[0],
+        gpus[0],
         [tf.config.LogicalDeviceConfiguration(memory_limit=2048)]
     )
     logical_gpus = tf.config.list_logical_devices('GPU')
-    print(len(physical_devices), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
 except RuntimeError as e:
     # Virtual devices must be set before GPUs have been initialized
     print(e)
-
 
 model = None
 input_shape = None
@@ -176,6 +178,6 @@ def process_detected_faces():
     return Response(json.dumps(face_features), status=200)
 
 
-if __name__ == '__main__':
-    # run app in debug mode on port 5000
-    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
+# if __name__ == '__main__':
+#     # run app in debug mode on port 5000
+#     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)

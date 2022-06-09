@@ -22,15 +22,18 @@ tf_major_version = int(tf_version.split(".")[0])
 tf_minor_version = int(tf_version.split(".")[1])
 
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
-physical_devices = tf.config.list_physical_devices('GPU')
 try:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
     tf.config.set_logical_device_configuration(
-        physical_devices[0],
-        [tf.config.LogicalDeviceConfiguration(memory_limit=2048)]
+        gpus[0],
+        [tf.config.LogicalDeviceConfiguration(memory_limit=3072)]
     )
     logical_gpus = tf.config.list_logical_devices('GPU')
-    print(len(physical_devices), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
 except RuntimeError as e:
     # Virtual devices must be set before GPUs have been initialized
     print(e)
@@ -624,6 +627,6 @@ def face_recognition():
     return make_response(jsonify(candidates), 200)
 
 
-if __name__ == '__main__':
-    # Run app in debug mode on port 6337
-    app.run(debug=True, host='0.0.0.0', port=6337, threaded=True)
+# if __name__ == '__main__':
+#     # Run app in debug mode on port 6337
+#     app.run(debug=True, host='0.0.0.0', port=6337, threaded=True)
